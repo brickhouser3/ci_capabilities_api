@@ -9,7 +9,6 @@ const ALLOWED_ORIGINS = [
   "http://localhost:3003",
   "http://localhost:3004",
   "https://brickhouser3.github.io",
-  "https://brickhouser3.github.io/ci_capabilities",
 ];
 
 /**
@@ -25,6 +24,7 @@ function applyCors(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Max-Age", "86400");
+  res.setHeader("Vary", "Origin");
 }
 
 export default async function handler(
