@@ -4,34 +4,32 @@ export const config = {
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "https://brickhouser3.github.io",
-  "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Vary": "Origin",
-};
+function setCors(res: VercelResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "https://brickhouser3.github.io");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Max-Age", "86400");
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Cache-Control", "no-store");
+}
 
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ) {
-  // Handle preflight / probes safely
+  setCors(res);
+
+  // ✅ Proper preflight
   if (req.method === "OPTIONS") {
-    return res.status(200).setHeader("Access-Control-Allow-Origin", CORS_HEADERS["Access-Control-Allow-Origin"]).end();
+    return res.status(204).end();
   }
 
   if (req.method === "GET") {
-    return res
-      .status(200)
-      .setHeader("Access-Control-Allow-Origin", CORS_HEADERS["Access-Control-Allow-Origin"])
-      .json({ ok: true });
+    return res.status(200).json({ ok: true });
   }
 
   if (req.method !== "POST") {
-    return res
-      .status(405)
-      .setHeader("Access-Control-Allow-Origin", CORS_HEADERS["Access-Control-Allow-Origin"])
-      .json({ error: "Method not allowed" });
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
@@ -55,18 +53,11 @@ export default async function handler(
     );
 
     const data = await dbxRes.json();
-
-    return res
-      .status(200)
-      .setHeader("Access-Control-Allow-Origin", CORS_HEADERS["Access-Control-Allow-Origin"])
-      .json(data);
+    return res.status(200).json(data);
   } catch (err: any) {
-    return res
-      .status(500)
-      .setHeader("Access-Control-Allow-Origin", CORS_HEADERS["Access-Control-Allow-Origin"])
-      .json({
-        error: "Databricks query failed",
-        details: err.message ?? "unknown",
-      });
+    return res.status(500).json({
+      error: "Databricks query failed",
+      details: err?.message ?? "unknown",
+    });
   }
 }
