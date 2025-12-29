@@ -2,7 +2,7 @@
   "name": "ci-capabilities-api",
   "private": true,
   "type": "module",
-  "dependencies": {
-    "@vercel/node": "^3.0.0"
+  "devDependencies": {
+    "@vercel/node": "^5.5.16"
   }
 }
