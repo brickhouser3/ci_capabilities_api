@@ -4,14 +4,31 @@ export const config = {
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-function setCors(res: VercelResponse) {
-  res.setHeader("Access-Control-Allow-Origin", "https://brickhouser3.github.io");
+function setCors(req: VercelRequest, res: VercelResponse) {
+  const origin = req.headers.origin || "";
+
+  const allowlist = new Set([
+    "https://brickhouser3.github.io",
+    // keep these if you want, but we'll also allow any localhost port below
+    "http://localhost:3000",
+    "http://localhost:3001",
+  ]);
+
+  const allowLocalhost =
+    origin.startsWith("http://localhost:") ||
+    origin.startsWith("http://127.0.0.1:");
+
+  if (allowlist.has(origin) || allowLocalhost) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Max-Age", "86400");
   res.setHeader("Vary", "Origin");
   res.setHeader("Cache-Control", "no-store");
 }
+
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -24,7 +41,10 @@ type KpiRequestV1 = {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  setCors(res);
+  setCors(req, res);
+
+  res.setHeader("x-mc-api", "query.ts");
+  res.setHeader("x-mc-origin", req.headers.origin || "(none)");
 
   // ✅ Proper preflight
   if (req.method === "OPTIONS") return res.status(204).end();
@@ -56,6 +76,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
 
     const parsed = body as Partial<KpiRequestV1>;
+
+    if (body?.ping === true) {
+  return res.status(200).json({
+    ok: true,
+    mode: "ping",
+    now: new Date().toISOString(),
+    received: body,
+  });
+}
+
 
     // ✅ Route by contract (keeps your UI stable as you add more KPIs)
     let statement =
