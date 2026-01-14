@@ -1,27 +1,37 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const API_VERSION = "2026-01-14_corsfix_nuclear_v1";
+const API_VERSION = "2026-01-14_corsfix_secure_final";
 
 function setCors(req: VercelRequest, res: VercelResponse) {
-  // NUCLEAR FIX: Allow ANY origin to access this API
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  
-  // Allow all standard methods
+  const origin = req.headers.origin || "";
+
+  // ✅ Security Check: Only allow Localhost and your GitHub Pages
+  const isLocalhost =
+    origin.startsWith("http://localhost") ||
+    origin.startsWith("https://localhost") ||
+    origin.startsWith("http://127.0.0.1");
+
+  const allowedDomains = ["https://brickhouser3.github.io"];
+
+  // Only set the header if the origin matches our allowlist
+  if (isLocalhost || allowedDomains.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   
-  // Allow the headers your app is sending
+  // ✅ Keep 'Accept' to prevent browser blocks
   res.setHeader(
     "Access-Control-Allow-Headers", 
     "Content-Type, Authorization, Accept, x-mc-api, x-mc-version"
   );
 
-  // Critical for debugging: Let the frontend see these custom headers
+  // ✅ Added 'Access-Control-Allow-Origin' here so your UI shows the value instead of "(missing)"
   res.setHeader(
     "Access-Control-Expose-Headers", 
-    "x-mc-api, x-mc-origin, x-mc-version, Content-Length"
+    "x-mc-api, x-mc-origin, x-mc-version, Content-Length, Access-Control-Allow-Origin"
   );
   
-  // Cache the preflight response for 24 hours so browsers stop asking
   res.setHeader("Access-Control-Max-Age", "86400");
 }
 
@@ -35,10 +45,9 @@ type KpiRequestV1 = {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // 1. Set CORS headers immediately
   setCors(req, res);
 
-  // 2. Handle the Preflight (Browser Handshake)
+  // Handle Preflight
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
@@ -48,7 +57,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("x-mc-version", API_VERSION);
 
   try {
-    // 3. Health Check (GET)
     if (req.method === "GET") {
       return res.status(200).json({
         ok: true,
@@ -58,15 +66,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // 4. Method Check
     if (req.method !== "POST") {
       return res.status(405).json({ ok: false, error: "Method not allowed" });
     }
 
-    // 5. Parse Body safely
     const body: any = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
 
-    // Ping check
     if (body?.ping === true) {
       return res.status(200).json({
         ok: true,
@@ -82,10 +87,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const warehouseId = process.env.WAREHOUSE_ID;
 
     if (!host || !token || !warehouseId) {
-      // console.error("Missing Databricks Envs"); // Uncomment to view in Vercel Logs
       return res.status(500).json({
         ok: false,
-        error: "Server configuration error (missing secrets)",
+        error: "Server configuration error",
         version: API_VERSION
       });
     }
@@ -123,7 +127,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const statementId = submitted?.statement_id;
     if (!statementId) throw new Error("No statement_id returned");
 
-    // Polling logic
     const deadlineMs = Date.now() + 12_000;
     let last = submitted;
 
