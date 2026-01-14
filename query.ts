@@ -1,7 +1,3 @@
-export const config = {
-  runtime: "nodejs",
-};
-
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 const API_VERSION = "2026-01-14_corsfix_v4"; // ✅ Bumped version
