@@ -4,36 +4,16 @@ export const config = {
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const API_VERSION = "corsfix-v4-jan14";
+const API_VERSION = "2026-01-14_corsfix_v4"; // ✅ Bumped version
 
 function setCors(req: VercelRequest, res: VercelResponse) {
-  const origin = req.headers.origin || "";
-
-  // ✅ Fix: Permissive check allows http/https and any port
-  const isLocalhost = origin.includes("localhost") || origin.includes("127.0.0.1");
-  const isAllowedDomain = origin === "https://brickhouser3.github.io";
-
-  if (isLocalhost || isAllowedDomain) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-
-  res.setHeader("Access-Control-Allow-Credentials", "true");
+  // NUCLEAR DEBUGGING: Allow everyone
+  res.setHeader("Access-Control-Allow-Origin", "*"); 
+  
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  
-  // ✅ Fix: Added 'Accept' and 'x-mc-api' to allowed headers
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, Accept, x-mc-api"
-  );
-  
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, x-mc-api");
   res.setHeader("Access-Control-Max-Age", "86400");
-
-  // ✅ expose debug headers to browser JS
-  res.setHeader(
-    "Access-Control-Expose-Headers",
-    "x-mc-api,x-mc-origin,x-mc-version"
-  );
-
+  res.setHeader("Access-Control-Expose-Headers", "x-mc-api,x-mc-origin,x-mc-version");
   res.setHeader("Cache-Control", "no-store");
 }
 
@@ -47,21 +27,22 @@ type KpiRequestV1 = {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // ✅ Always set CORS + debug headers first, for every path
   setCors(req, res);
 
-  // ✅ debug headers
   res.setHeader("x-mc-api", "query.ts");
   res.setHeader("x-mc-origin", String(req.headers.origin || "(none)"));
   res.setHeader("x-mc-version", API_VERSION);
 
+  // ✅ Preflight must return with headers already set
   if (req.method === "OPTIONS") return res.status(204).end();
 
+  // ✅ Health
   if (req.method === "GET") {
     return res.status(200).json({
       ok: true,
       now: new Date().toISOString(),
       version: API_VERSION,
-      origin: String(req.headers.origin || "(none)"),
     });
   }
 
@@ -101,7 +82,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const parsed = body as Partial<KpiRequestV1>;
 
     let statement =
-      "select max(cal_dt) as value from vip.bir.bir_weekly_ind";
+      "select max(cal_dt) as value from vip.bir.bir_weekly_ind"; // default
 
     if (parsed?.contract_version === "kpi_request.v1") {
       switch (parsed?.kpi) {
