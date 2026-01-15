@@ -61,14 +61,14 @@ const KPI_MAP: Record<
     col: "pods",
     hasChannel: true,
     geoColumn: "WSLR_NBR",
-    agg: "AVG"
+    agg: "SUM"
   },
   taps: {
     table: "mbmc_actuals_distro",
     col: "taps",
     hasChannel: true,
     geoColumn: "WSLR_NBR",
-    agg: "AVG"
+    agg: "SUM"
   },
   avd: {
     table: "mbmc_actuals_distro",
