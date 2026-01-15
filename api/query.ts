@@ -1,11 +1,79 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const API_VERSION = "2026-01-15_global_filters_v1";
+const API_VERSION = "2026-01-15_multi_table_v2";
+
+/* ======================================================
+   1. KPI CONFIGURATION (The "Brain")
+====================================================== */
+const KPI_MAP: Record<
+  string,
+  { table: string; col: string; hasChannel: boolean; geoColumn: string }
+> = {
+  // Metric      Table Name                                      Column Prefix   Has Channel?   Geo Column
+  volume: {
+    table: "mbmc_actuals_volume",
+    col: "VAL",
+    hasChannel: true,
+    geoColumn: "WSLR_NBR",
+  },
+  revenue: {
+    table: "mbmc_actuals_revenue",
+    col: "VAL",
+    hasChannel: false,
+    geoColumn: "WSLR_NBR",
+  },
+  share: {
+    table: "mbmc_actuals_bir",
+    col: "VAL",
+    hasChannel: true,
+    geoColumn: "WSLR_NBR",
+  },
+  displays: {
+    table: "mbmc_actuals_displays",
+    col: "VAL",
+    hasChannel: true,
+    geoColumn: "WSLR_NBR",
+  },
+
+  // ✅ The Shared Table (Assumes columns: PODS_CY, TAPS_CY, AVD_CY)
+  pods: {
+    table: "mbmc_actuals_distro",
+    col: "PODS",
+    hasChannel: true,
+    geoColumn: "WSLR_NBR",
+  },
+  taps: {
+    table: "mbmc_actuals_distro",
+    col: "TAPS",
+    hasChannel: true,
+    geoColumn: "WSLR_NBR",
+  },
+  avd: {
+    table: "mbmc_actuals_distro",
+    col: "AVD",
+    hasChannel: true,
+    geoColumn: "WSLR_NBR",
+  },
+
+  // ✅ Ad Share (Uses KAM instead of WSLR)
+  adshare: {
+    table: "mbmc_actuals_ads",
+    col: "VAL",
+    hasChannel: true,
+    geoColumn: "KAM_ID",
+  },
+};
 
 type KpiRequestV1 = {
   contract_version: "kpi_request.v1";
-  kpi: "volume" | "revenue" | "share";
-  groupBy?: "time" | "megabrand";
+  kpi: string;
+  groupBy?:
+    | "time"
+    | "megabrand"
+    | "region"
+    | "state"
+    | "wholesaler"
+    | "channel";
   max_month?: string; // e.g. "202510"
   scope?: "MTD" | "YTD"; // e.g. "YTD"
   filters?: {
@@ -90,26 +158,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       scope = "YTD",
     } = body as KpiRequestV1;
 
-    // --- TABLE SELECTION ---
-    let table = "";
-    if (kpi === "volume") table = "commercial_dev.capabilities.mbmc_actuals_volume";
-    else if (kpi === "revenue") table = "commercial_dev.capabilities.mbmc_actuals_revenue";
-    else {
+    // --- 2. RESOLVE CONFIG ---
+    const config = KPI_MAP[kpi];
+    if (!config) {
       return res.status(400).json({
         ok: false,
-        error: `KPI '${kpi}' is not yet implemented.`,
+        error: `KPI '${kpi}' is not configured in API map.`,
       });
     }
 
-    // --- FILTER LOGIC ---
+    const tableName = `commercial_dev.capabilities.${config.table}`;
+    const colCy = `${config.col}_CY`; // e.g. VAL_CY or PODS_CY
+    const colLy = `${config.col}_LY`;
+
+    // --- 3. FILTER LOGIC ---
     const conditions: string[] = ["1=1"];
 
     // ✅ TIME SCOPE LOGIC
     if (scope === "MTD") {
-      // Strict equality: Just the selected month
       conditions.push(`cal_yr_mo_nbr = ${max_month}`);
     } else {
-      // YTD: From Jan 1st of that year up to max_month
       const startOfYear = max_month.substring(0, 4) + "01";
       conditions.push(`cal_yr_mo_nbr BETWEEN ${startOfYear} AND ${max_month}`);
     }
@@ -122,35 +190,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       conditions.push(`megabrand IN (${list})`);
     }
 
-    // --- DYNAMIC GROUPING ---
+    // --- 4. DYNAMIC GROUPING ---
     let selectClause = "";
     let groupByClause = "";
-    let orderByClause = "";
-    const col = kpi === "revenue" ? "REV" : "BBLs";
+    let orderByClause = "ORDER BY val_cy DESC";
 
-    if (groupBy === "megabrand") {
-      // BRAND RANKING
-      selectClause = `
-        megabrand as dimension,
-        SUM(${col}) as val_cy,
-        SUM(${col}_LY) as val_ly
-      `;
-      groupByClause = "GROUP BY megabrand";
-      orderByClause = "ORDER BY val_cy DESC";
-    } else {
-      // TIME SERIES DEFAULT
-      selectClause = `
-        cal_yr_mo_nbr as dimension,
-        SUM(${col}) as val_cy,
-        SUM(${col}_LY) as val_ly
-      `;
-      groupByClause = "GROUP BY cal_yr_mo_nbr";
-      orderByClause = "ORDER BY cal_yr_mo_nbr";
+    switch (groupBy) {
+      case "megabrand":
+        selectClause = `megabrand as dimension`;
+        groupByClause = `GROUP BY megabrand`;
+        break;
+
+      case "region":
+        selectClause = `sls_regn_nm as dimension`;
+        groupByClause = `GROUP BY sls_regn_nm`;
+        break;
+
+      case "state":
+        selectClause = `state_cd as dimension`;
+        groupByClause = `GROUP BY state_cd`;
+        break;
+
+      case "wholesaler":
+        // ✅ NUANCE: Ad Share uses KAM, others use WSLR
+        const geoCol = config.geoColumn; // WSLR_NBR or KAM_ID
+        selectClause = `${geoCol} as dimension`;
+        groupByClause = `GROUP BY ${geoCol}`;
+        break;
+
+      case "channel":
+        // ✅ NUANCE: Revenue has no channel data
+        if (!config.hasChannel) {
+          selectClause = `'All Channels' as dimension`;
+          groupByClause = ``; // No group by needed, just aggregate total
+        } else {
+          selectClause = `channel as dimension`;
+          groupByClause = `GROUP BY channel`;
+        }
+        break;
+
+      case "time":
+      default:
+        selectClause = `cal_yr_mo_nbr as dimension`;
+        groupByClause = `GROUP BY cal_yr_mo_nbr`;
+        orderByClause = "ORDER BY cal_yr_mo_nbr ASC";
+        break;
     }
 
     const finalSql = `
-      SELECT ${selectClause}
-      FROM ${table}
+      SELECT ${selectClause},
+      SUM(${colCy}) as val_cy,
+      SUM(${colLy}) as val_ly
+      FROM ${tableName}
       WHERE ${conditions.join(" AND ")}
       ${groupByClause}
       ${orderByClause}
