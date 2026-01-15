@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const API_VERSION = "2026-01-15_multi_table_v2";
+const API_VERSION = "2026-01-15_dynamic_cols_final";
 
 /* ======================================================
    1. KPI CONFIGURATION (The "Brain")
@@ -9,58 +9,57 @@ const KPI_MAP: Record<
   string,
   { table: string; col: string; hasChannel: boolean; geoColumn: string }
 > = {
-  // Metric      Table Name                                      Column Prefix   Has Channel?   Geo Column
   volume: {
     table: "mbmc_actuals_volume",
-    col: "VAL",
+    col: "STRs", 
     hasChannel: true,
     geoColumn: "WSLR_NBR",
   },
   revenue: {
     table: "mbmc_actuals_revenue",
-    col: "VAL",
+    col: "net_rev", // Generates net_rev_CY
     hasChannel: false,
     geoColumn: "WSLR_NBR",
   },
   share: {
     table: "mbmc_actuals_bir",
-    col: "VAL",
+    col: "shr", // Generates shr_CY
     hasChannel: true,
     geoColumn: "WSLR_NBR",
   },
   displays: {
     table: "mbmc_actuals_displays",
-    col: "VAL",
+    col: "displays",
     hasChannel: true,
     geoColumn: "WSLR_NBR",
   },
 
-  // ✅ The Shared Table (Assumes columns: PODS_CY, TAPS_CY, AVD_CY)
+  // ✅ SHARED DISTRO TABLE
   pods: {
     table: "mbmc_actuals_distro",
-    col: "PODS",
+    col: "pods",
     hasChannel: true,
     geoColumn: "WSLR_NBR",
   },
   taps: {
     table: "mbmc_actuals_distro",
-    col: "TAPS",
+    col: "taps",
     hasChannel: true,
     geoColumn: "WSLR_NBR",
   },
   avd: {
     table: "mbmc_actuals_distro",
-    col: "AVD",
+    col: "avd",
     hasChannel: true,
     geoColumn: "WSLR_NBR",
   },
 
-  // ✅ Ad Share (Uses KAM instead of WSLR)
+  // ✅ AD SHARE (KAMs)
   adshare: {
     table: "mbmc_actuals_ads",
-    col: "VAL",
+    col: "ad_share",
     hasChannel: true,
-    geoColumn: "KAM_ID",
+    geoColumn: "KAM", // Checks 'KAM' column instead of 'WSLR_NBR'
   },
 };
 
@@ -74,8 +73,8 @@ type KpiRequestV1 = {
     | "state"
     | "wholesaler"
     | "channel";
-  max_month?: string; // e.g. "202510"
-  scope?: "MTD" | "YTD"; // e.g. "YTD"
+  max_month?: string;
+  scope?: "MTD" | "YTD";
   filters?: {
     megabrand?: string[];
     wholesaler_id?: string[];
@@ -168,7 +167,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const tableName = `commercial_dev.capabilities.${config.table}`;
-    const colCy = `${config.col}_CY`; // e.g. VAL_CY or PODS_CY
+    const colCy = `${config.col}_CY`; // e.g. net_rev_CY
     const colLy = `${config.col}_LY`;
 
     // --- 3. FILTER LOGIC ---
@@ -212,17 +211,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         break;
 
       case "wholesaler":
-        // ✅ NUANCE: Ad Share uses KAM, others use WSLR
-        const geoCol = config.geoColumn; // WSLR_NBR or KAM_ID
+        // ✅ HANDLE AD SHARE (KAM) VS OTHERS (WSLR)
+        const geoCol = config.geoColumn; // WSLR_NBR or KAM
         selectClause = `${geoCol} as dimension`;
         groupByClause = `GROUP BY ${geoCol}`;
         break;
 
       case "channel":
-        // ✅ NUANCE: Revenue has no channel data
+        // ✅ HANDLE REVENUE (No Channel)
         if (!config.hasChannel) {
           selectClause = `'All Channels' as dimension`;
-          groupByClause = ``; // No group by needed, just aggregate total
+          groupByClause = ``;
         } else {
           selectClause = `channel as dimension`;
           groupByClause = `GROUP BY channel`;
@@ -248,7 +247,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       LIMIT 1000
     `;
 
-    // --- EXECUTE ON DATABRICKS ---
+    // --- 5. EXECUTE ---
     const submitRes = await fetch(`${host}/api/2.0/sql/statements`, {
       method: "POST",
       headers: {
@@ -275,7 +274,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const statementId = submitted?.statement_id;
     if (!statementId) throw new Error("No statement_id returned");
 
-    // --- POLLING LOOP ---
     const deadlineMs = Date.now() + 15000;
     let last = submitted;
 
