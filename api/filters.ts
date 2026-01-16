@@ -1,13 +1,22 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const API_VERSION = "2026-01-15_filters_v1";
+const API_VERSION = "2026-01-15_filters_v2_safe";
 
 function setCors(req: VercelRequest, res: VercelResponse) {
   const origin = req.headers.origin || "";
-  const allowedDomains = ["https://brickhouser3.github.io", "http://localhost:3000"];
+  
+  // ✅ ALLOW LOCALHOST explicitly
+  const allowedDomains = [
+      "https://brickhouser3.github.io", 
+      "http://localhost:3000", 
+      "http://localhost:3001",
+      "http://127.0.0.1:3000"
+  ];
+  
   if (allowedDomains.some(d => origin.startsWith(d))) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
+  
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-mc-api, x-mc-version");
 }
@@ -16,15 +25,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCors(req, res);
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  try {
-    const { dimension, table } = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+  // ✅ 1. Method Guard
+  if (req.method !== "POST") {
+      return res.status(405).json({ ok: false, error: "Method not allowed. Please use POST." });
+  }
 
-    // --- SECURITY: Allowlist valid columns/tables to prevent SQL Injection ---
+  try {
+    // ✅ 2. Safe Body Parsing (Prevents the "undefined" crash)
+    const rawBody = req.body;
+    const body = rawBody 
+        ? (typeof rawBody === "string" ? JSON.parse(rawBody) : rawBody) 
+        : {};
+
+    const { dimension, table } = body;
+
+    // ✅ 3. Validation Check
+    if (!dimension || !table) {
+        return res.status(400).json({ ok: false, error: "Missing required fields: 'dimension' or 'table'" });
+    }
+
+    // --- SECURITY: Allowlist ---
     const ALLOWED_COLS = ["wslr_nbr", "mktng_st_cd", "sls_regn_cd", "channel"];
     const ALLOWED_TABLES = ["mbmc_actuals_volume", "mbmc_actuals_revenue", "mbmc_actuals_distro"];
 
     if (!ALLOWED_COLS.includes(dimension) || !ALLOWED_TABLES.includes(table)) {
-        return res.status(400).json({ ok: false, error: "Invalid dimension or table requested" });
+        return res.status(400).json({ ok: false, error: `Invalid dimension '${dimension}' or table '${table}'` });
     }
 
     // --- CREDENTIALS ---
@@ -33,7 +58,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const warehouseId = process.env.WAREHOUSE_ID;
 
     // --- SQL: Get Distinct Values ---
-    // We limit to 2000 to prevent dropdowns from crashing the browser
     const sql = `
       SELECT DISTINCT ${dimension} as label 
       FROM commercial_dev.capabilities.${table} 
@@ -52,7 +76,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const submitted = await submitRes.json();
     const statementId = submitted?.statement_id;
 
-    // Polling logic (simplified for brevity)
+    if (!statementId) {
+        throw new Error(`Databricks Error: ${submitted?.message || "No statement_id returned"}`);
+    }
+
+    // Polling logic
     let state = "PENDING";
     let result = null;
     const start = Date.now();
@@ -67,9 +95,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (state === "SUCCEEDED") result = json.result;
     }
 
-    if (!result) throw new Error("Query timed out");
+    if (!result) throw new Error("Query timed out or failed");
 
-    // Format for Dropdown: { label: "01", value: "01" }
+    // Format for Dropdown
     const options = result.data_array.map((row: string[]) => ({
         label: row[0],
         value: row[0]
