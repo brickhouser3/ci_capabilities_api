@@ -38,36 +38,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { dimension, table } = body;
 
-    // --- VALIDATION ---
     if (!dimension || !table) {
-        return res.status(400).json({ ok: false, error: "Missing required fields: 'dimension' or 'table'" });
+        return res.status(400).json({ ok: false, error: "Missing required fields" });
     }
 
-    const ALLOWED_COLS = ["wslr_nbr", "mktng_st_cd", "sls_regn_cd", "channel"];
+    // Security Allowlist (Make sure your columns are here)
+    const ALLOWED_COLS = ["wslr_nbr", "mktng_st_cd", "sls_regn_cd", "channel", "megabrand"];
     const ALLOWED_TABLES = ["mbmc_actuals_volume", "mbmc_actuals_revenue", "mbmc_actuals_distro"];
 
     if (!ALLOWED_COLS.includes(dimension) || !ALLOWED_TABLES.includes(table)) {
-        return res.status(400).json({ ok: false, error: `Invalid dimension '${dimension}' or table '${table}'` });
+        return res.status(400).json({ ok: false, error: `Invalid dimension '${dimension}' or table` });
     }
 
     const host = process.env.DATABRICKS_HOST;
     const token = process.env.DATABRICKS_TOKEN;
     const warehouseId = process.env.WAREHOUSE_ID;
 
-    // --- SQL ---
+    // ✅ FIXED SQL: ORDER BY the alias 'label'
     const sql = `
       SELECT DISTINCT ${dimension} as label 
       FROM commercial_dev.capabilities.${table} 
       WHERE ${dimension} IS NOT NULL 
-      ORDER BY ${dimension} ASC 
+      ORDER BY label ASC 
       LIMIT 2000
     `;
 
-    // --- SUBMIT QUERY ---
+    // --- SUBMIT ---
     const submitRes = await fetch(`${host}/api/2.0/sql/statements`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ statement: sql, warehouse_id: warehouseId, wait_timeout: "0s" }), // Async submit
+      body: JSON.stringify({ statement: sql, warehouse_id: warehouseId, wait_timeout: "0s" }),
     });
 
     const submitted = await submitRes.json();
@@ -77,8 +77,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         throw new Error(`Databricks Error: ${submitted?.message || "No statement_id returned"}`);
     }
 
-    // --- POLLING (Increased Duration) ---
-    // Poll for up to 45 seconds to handle warehouse "cold start"
+    // --- POLLING ---
     const DEADLINE = Date.now() + 45000; 
     let state = "PENDING";
     let result = null;
@@ -95,22 +94,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             break;
         }
         if (["FAILED", "CANCELED", "CLOSED"].includes(state)) {
-            throw new Error(`Query failed with state: ${state}. Error: ${json.status?.error?.message || "Unknown error"}`);
+            throw new Error(`Query failed with state: ${state}. Error: ${json.status?.error?.message}`);
         }
-
-        // Wait 1s before checking again to be gentle on the API
         await sleep(1000);
     }
 
     if (!result) {
-        // If we timed out, try to cancel the query to be clean
         await fetch(`${host}/api/2.0/sql/statements/${statementId}/cancel`, {
              method: "POST", headers: { Authorization: `Bearer ${token}` } 
         });
-        return res.status(504).json({ ok: false, error: "Query timed out after 45s (Warehouse likely starting up). Please try again." });
+        return res.status(504).json({ ok: false, error: "Query timed out" });
     }
 
-    // --- FORMAT & RETURN ---
     const options = result.data_array.map((row: string[]) => ({
         label: row[0],
         value: row[0]
